@@ -1,0 +1,6 @@
+net.get('s1').setIP('10.10.10.1/24')
+net.get('s2').setIP('10.10.10.2/24')
+net.get('s3').setIP('10.10.10.3/24')
+net.get('r1').setIP('10.10.10.11/24')
+net.get('r2').setIP('10.10.10.12/24')
+net.get('r3').setIP('10.10.10.13/24')
