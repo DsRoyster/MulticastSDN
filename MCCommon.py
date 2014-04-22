@@ -13,10 +13,13 @@ class MC(object):
 	UPDATE		= 0x00010000
 	UPDATE_REPLY= 0x00020000
 
-	mngaddrConst = '12.34.56.78'
+	mngaddrConst = '10.10.10.250'
 	mngportConst = 1535
 
 	# Definition for data communication
 	DATA_PACKET	= 0xff000000
 	dataportBase = 26000
 	FIX_DATA_SIZE = 1400
+
+def inttoip(ip):
+	return skt.inet_ntoa(hex(ip)[2:].decode('hex'))

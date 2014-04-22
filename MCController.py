@@ -47,6 +47,8 @@ from pox.lib.util import dpid_to_str
 import pox.lib.packet as pkt
 import time
 from utils import *
+from pox.lib.packet.arp import arp
+from pox.lib.packet.ethernet import ethernet
 
 log = core.getLogger()
 
@@ -63,6 +65,9 @@ mac_map = {}
 path_map = defaultdict(lambda:defaultdict(lambda:(None,None)))
 
 # Waiting path.	(dpid,xid)->WaitingPath
+waiting_paths = {}
+
+# Waiting path.	(dpid,xid)->WaitingPath
 waiting_trees = {}
 
 # Time to not flood in seconds
@@ -73,13 +78,18 @@ FLOW_IDLE_TIMEOUT = 10
 FLOW_HARD_TIMEOUT = 30
 
 # How long is allowable to set up a path?
+PATH_SETUP_TIME = 4
 TREE_SETUP_TIME = 4
+
+# Flag for whether using multitree or not
+mtflg = True
+
 
 
 
 ######################################################
 ## DFS find tree
-def dfsTree(s, R, mark):
+def bfsTree(s, R, mark):
 	sws = switches.values()
 	tree = []
 	stack = [s]
@@ -98,8 +108,8 @@ def dfsTree(s, R, mark):
 		# Push adjacent nodes in stack
 		for y in sws:
 			# Guarantee mark
-			if (y not in visit) and (adjacency[v][y] != None) and (mark[v][y] != None):
-				stack.append(y)
+			if (y not in visit) and (adjacency[v][y] != None) and (not mark[v][y]):
+				stack.insert(0, y)
 				pa[y] = v
 
 	for r in R:
@@ -120,9 +130,12 @@ def pruneTree(s, R, tree):
 				contFlg = True
 		if not contFlg:
 			break
-	for e in tree:
+	cnt = 0
+	for i in xrange(len(tree)):
+		e = tree[i-cnt]
 		if (e[0] not in sFlg) or (e[1] not in sFlg):
 			tree.remove(e)
+			cnt += 1
 
 	return tree
 
@@ -130,13 +143,13 @@ def pruneTree(s, R, tree):
 ## Aggregate tree port information
 # tr1: v -> (inport, outports)
 def aggTree(s, R, tree):
-	tr1 = {s: (None, [])}
+	tr1 = {s: [None, []]}
 	for (u, v) in tree:
 		if u not in tr1.keys():
-			tr1[u] = (None, [])
+			tr1[u] = [None, []]
 		tr1[u][1].append(adjacency[u][v])
 		if v not in tr1.keys():
-			tr1[v] = (None, [])
+			tr1[v] = [None, []]
 		tr1[v][0] = adjacency[v][u]
 
 	return tr1
@@ -144,30 +157,43 @@ def aggTree(s, R, tree):
 ######################################################
 ## Calculating the trees
 # Just use DFS
-def calcMCTrees(s, R):
+def calcMCTrees(s, R, limit = 0):
 	# Mark edge when tree found
 	# [sw1][sw2] -> mark
 	mark = defaultdict(lambda:defaultdict(lambda:(False)))
 	# Set output ports in the edge
 	outPortLst = {r[0]:[] for r in R}
+	R1 = []
 	for r in R:
 		outPortLst[r[0]].append(r[1])
+		R1.append(r[0])
 
-
+	#log.debug('Multitree status: %s', str(mtflg))
 	# Find trees until cannot find one
 	tlst = []
+	itrCnt = 1
 	while True:
-		tree = dfsTree(s, R, mark)
+		#log.debug('Iteration %d: finding tree.', itrCnt)
+		itrCnt += 1
+
+		tree = bfsTree(s, R1, mark)
+		#log.debug('Tree found: %s', str(tree))
 		if tree == None:
 			break
-		tree = pruneTree(s, R, tree)
+		tree = pruneTree(s, R1, tree)
+		#log.debug('Tree pruned: %s', str(tree))
 		for (u, v) in tree:
 			mark[u][v] = True
-		tr1 = aggTree(s, R, tree)
+		tr1 = aggTree(s, R1, tree)
 		# Set output for edges
 		for r in R:
 			tr1[r[0]][1] = outPortLst[r[0]]
 		tlst.append(tr1)
+		if not mtflg or (limit != 0 and len(tlst) >= limit):
+			break
+
+	#for tr in tlst:
+	#	log.debug('---> %s', str(tr))
 
 	return tlst
 
@@ -277,7 +303,7 @@ class WaitingTree (object):
 	"""
 	A tree which is waiting for its paths to be established
 	"""
-	def __init__ (self, s, R, tree, packet):
+	def __init__ (self, s, tree, packet):
 		"""
 		xids is a sequence of (dpid,xid)
 		first_switch is the DPID where the packet came from (source switch)
@@ -285,7 +311,7 @@ class WaitingTree (object):
 		"""
 		self.expires_at = time.time() + TREE_SETUP_TIME
 		self.tree = tree
-		self.first_switch = tree[s]
+		self.first_switch = s
 		self.xids = set()
 		self.packet = packet
 
@@ -334,6 +360,72 @@ class TreeInstalled (Event):
 	"""
 	Fired when a path is installed
 	"""
+	def __init__ (self, tree):
+		Event.__init__(self)
+		self.tree = tree
+
+
+class WaitingPath (object):
+	"""
+	A path which is waiting for its path to be established
+	"""
+	def __init__ (self, path, packet):
+		"""
+		xids is a sequence of (dpid,xid)
+		first_switch is the DPID where the packet came from
+		packet is something that can be sent in a packet_out
+		"""
+		self.expires_at = time.time() + PATH_SETUP_TIME
+		self.path = path
+		self.first_switch = path[0][0].dpid
+		self.xids = set()
+		self.packet = packet
+
+		if len(waiting_paths) > 1000:
+			WaitingPath.expire_waiting_paths()
+
+	def add_xid (self, dpid, xid):
+		self.xids.add((dpid,xid))
+		waiting_paths[(dpid,xid)] = self
+
+	@property
+	def is_expired (self):
+		return time.time() >= self.expires_at
+
+	def notify (self, event):
+		"""
+		Called when a barrier has been received
+		"""
+		self.xids.discard((event.dpid,event.xid))
+		if len(self.xids) == 0:
+			# Done!
+			if self.packet:
+				log.debug("Sending delayed packet out %s"
+									% (dpid_to_str(self.first_switch),))
+				msg = of.ofp_packet_out(data=self.packet,
+						action=of.ofp_action_output(port=of.OFPP_TABLE))
+				core.openflow.sendToDPID(self.first_switch, msg)
+
+			core.MCController.raiseEvent(PathInstalled(self.path))
+
+
+	@staticmethod
+	def expire_waiting_paths ():
+		packets = set(waiting_paths.values())
+		killed = 0
+		for p in packets:
+			if p.is_expired:
+				killed += 1
+				for entry in p.xids:
+					waiting_paths.pop(entry, None)
+		if killed:
+			log.error("%i paths failed to install" % (killed,))
+
+
+class PathInstalled (Event):
+	"""
+	Fired when a path is installed
+	"""
 	def __init__ (self, path):
 		Event.__init__(self)
 		self.path = path
@@ -354,6 +446,8 @@ class MCGroup (object):
 		self.dstip = dstip
 		self.dstport = dstport
 		self.memlst = {}
+	def __repr__ (self):
+		return 'Group ' + str(self.dstip) + ':' + str(self.dstport) + ' -> ' + str(self.memlst)
 	def addMem(self, srcip, status = ACTIVE):
 		self.memlst[srcip] = status
 	def delMem(self, srcip):
@@ -412,7 +506,7 @@ class MCSessionManager (object):
 		dstip = data['dstaddr']
 		dstport = data['dstport']
 		if (dstip, dstport) not in self.groupLst.keys():
-			self.groupLst[dstip, dstport] = MCGroup()
+			self.groupLst[dstip, dstport] = MCGroup(dstip, dstport)
 		self.groupLst[dstip, dstport].addMem(data['srcaddr'])
 	def delMem(self, data):
 		dstip = data['dstaddr']
@@ -426,9 +520,11 @@ class MCSessionManager (object):
 	def initSession(self, packet, data, s):
 		dstip = data['dstaddr']
 		dstport = data['dstport']
+		#log.debug( 'Group: %s', str(self.groupLst))
 		if (dstip, dstport) not in self.groupLst.keys():
 			# Do some thing say about no group exists
-			pass
+			log.debug('No group found: %s:%s', dstip, dstport)
+			return None, None
 		else:
 			if (dstip, dstport) not in self.sessionLst.keys():
 				self.sessionLst[dstip, dstport] = []
@@ -436,11 +532,25 @@ class MCSessionManager (object):
 			# calcMCTrees(srceth, dsteths)
 			# Here needs some mind, maybe the conversion is wrong for calculating. Please check..............
 			# This mac_map is not right. mac_map only stores the information about end hosts
-			rLst = [mac_map[self.ipToMac[ip]] for ip in self.groupLst[dstip, dstport].getActiveMem()]
-			tLst = calcMCTrees(s, rLst)
+			rLst = []
+			#log.debug('IP MAP: %s', str(self.ipToMac))
+			#log.debug('mac map: %s', str(mac_map))
+			#log.debug('adj: %s', str(adjacency))
+			for ip in self.groupLst[dstip, dstport].getActiveMem():
+				#log.debug('MAC: %s', str(self.ipToMac[ip]))
+				dpidAddr = mac_map[self.ipToMac[IPAddr(ip)]]
+				#log.debug('DPID: %s', str(dpidAddr))
+				rLst.append(dpidAddr)
+			rLst = list(set(rLst))
+			#log.debug("s, R: %s -> %s", s, rLst)
+			tLst = calcMCTrees(s, rLst, limit = data['nTree'])
+			#tLst = [tLst[0]]
 			tidLst = sess.setTreeLst(tLst)
 			self.sessionLst[dstip, dstport].append(sess)
-		return tLst, tidLst
+		return tLst, tidLst, rLst
+
+
+mcsm = MCSessionManager()
 
 class Switch (EventMixin):
 	def __init__ (self):
@@ -451,49 +561,133 @@ class Switch (EventMixin):
 		self._connected_at = None
 
 		# Session Manager. Very important
-		self.mcsm = MCSessionManager()
+		#self.mcsm = MCSessionManager()
 
 	def __repr__ (self):
 		return dpid_to_str(self.dpid)
 
-	def _install (self, switch, in_port, out_port, match, buf = None):
-		msg = of.ofp_flow_mod()
-		msg.match = match
-		if in_port != None:
+	def _install (self, switch, in_port, out_port, match, buf = None, tree = False, mod_eth = False):
+		if tree:
+			msg = of.ofp_flow_mod()
+			msg.match = match
+			if in_port != None:
+				msg.match.in_port = in_port
+			msg.idle_timeout = FLOW_IDLE_TIMEOUT
+			msg.hard_timeout = FLOW_HARD_TIMEOUT
+			#log.debug('Out ports: %s:%s', str(switch), str(out_port))
+			if mod_eth:
+				msg.actions.append(of.ofp_action_dl_addr.set_dst(EthAddr('ff:ff:ff:ff:ff:ff')))
+				msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr('255.255.255.255')))
+			for op in out_port:
+				msg.actions.append(of.ofp_action_output(port = op))
+			msg.buffer_id = buf
+			switch.connection.send(msg)
+		else:
+			msg = of.ofp_flow_mod()
+			msg.match = match
 			msg.match.in_port = in_port
-		msg.idle_timeout = FLOW_IDLE_TIMEOUT
-		msg.hard_timeout = FLOW_HARD_TIMEOUT
-		for op in out_port:
-			msg.actions.append(of.ofp_action_output(port = op))
-		msg.buffer_id = buf
-		switch.connection.send(msg)
+			msg.idle_timeout = FLOW_IDLE_TIMEOUT
+			msg.hard_timeout = FLOW_HARD_TIMEOUT
+			msg.actions.append(of.ofp_action_output(port = out_port))
+			msg.buffer_id = buf
+			switch.connection.send(msg)
 
-	def _install_tree (self, tree, match, packet_in=None):
-		wp = WaitingTree(tree, packet_in)
+	def _install_tree (self, s, R, tree, match, packet_in=None):
+		wp = WaitingTree(s, tree, packet_in)
 		for sw in tree.keys():
+			match.in_port = None
 			in_port, out_port = tree[sw]
+			if sw not in R:
+				self._install(sw, in_port, out_port, match, tree = True)
+			else:
+				self._install(sw, in_port, out_port, match, tree = True, mod_eth = True)
+			msg = of.ofp_barrier_request()
+			sw.connection.send(msg)
+			wp.add_xid(sw.dpid,msg.xid)
+
+	def _install_path (self, p, match, packet_in=None):
+		wp = WaitingPath(p, packet_in)
+		for sw,in_port,out_port in p:
 			self._install(sw, in_port, out_port, match)
 			msg = of.ofp_barrier_request()
 			sw.connection.send(msg)
 			wp.add_xid(sw.dpid,msg.xid)
 
-
-	######################################################
-	## Install tree
-	def installTrees (self, data, tLst, tidLst, match, event):
+	def install_path (self, dst_sw, last_port, match, event):
 		"""
 		Attempts to install a path between this switch and some destination
 		"""
+		p = _get_path(self, dst_sw, event.port, last_port)
+		if p is None:
+			log.warning("Can't get from %s to %s", match.dl_src, match.dl_dst)
 
-		log.debug("Installing trees for %s -> %s:%04x",
-				match.nw_src, match.nw_dst, match.tp_src)
+			import pox.lib.packet as pkt
+
+			if (match.dl_type == pkt.ethernet.IP_TYPE and
+					event.parsed.find('ipv4')):
+				# It's IP -- let's send a destination unreachable
+				log.debug("Dest unreachable (%s -> %s)",
+									match.dl_src, match.dl_dst)
+
+				from pox.lib.addresses import EthAddr
+				e = pkt.ethernet()
+				e.src = EthAddr(dpid_to_str(self.dpid)) #FIXME: Hmm...
+				e.dst = match.dl_src
+				e.type = e.IP_TYPE
+				ipp = pkt.ipv4()
+				ipp.protocol = ipp.ICMP_PROTOCOL
+				ipp.srcip = match.nw_dst #FIXME: Ridiculous
+				ipp.dstip = match.nw_src
+				icmp = pkt.icmp()
+				icmp.type = pkt.ICMP.TYPE_DEST_UNREACH
+				icmp.code = pkt.ICMP.CODE_UNREACH_HOST
+				orig_ip = event.parsed.find('ipv4')
+
+				d = orig_ip.pack()
+				d = d[:orig_ip.hl * 4 + 8]
+				import struct
+				d = struct.pack("!HH", 0,0) + d #FIXME: MTU
+				icmp.payload = d
+				ipp.payload = icmp
+				e.payload = ipp
+				msg = of.ofp_packet_out()
+				msg.actions.append(of.ofp_action_output(port = event.port))
+				msg.data = e.pack()
+				self.connection.send(msg)
+
+			return
+
+		log.debug("Installing path for %s -> %s %d (%i hops)",
+				match.dl_src, match.dl_dst, match.dl_type, len(p))
+
+		# We have a path -- install it
+		self._install_path(p, match, event.ofp)
+
+		# Now reverse it and install it backwards
+		# (we'll just assume that will work)
+		p = [(sw,out_port,in_port) for sw,in_port,out_port in p]
+		self._install_path(p, match.flip())
+
+
+	######################################################
+	## Install tree
+	def installTrees (self, data, s, R, tLst, tidLst, match, event):
+		"""
+		Attempts to install a path between this switch and some destination
+		"""
+		R1 = []
+		for r in R:
+			R1.append(r[0])
+
 
 		# We have a path -- install it
 		for t in tLst:
 			tport = tidLst[tLst.index(t)]
 			# Tree id as the source port
 			match.tp_src = tport
-			self._install_tree(t, match)
+			self._install_tree(s, R1, t, match)
+			log.debug("Installing tree for %s:%d -> %s:%d",
+					match.nw_src, match.tp_src, match.nw_dst, match.tp_dst)
 
 		# Now reverse it and install it backwards
 		# (we'll just assume that will work)
@@ -508,8 +702,8 @@ class Switch (EventMixin):
 		Attempts to install a path between this switch and some destination
 		"""
 
-		log.debug("Uninstalling trees for %s -> %s:%04x",
-				match.nw_src, match.nw_dst, match.tp_src)
+		log.debug("Uninstalling trees for %s -> %s:%d",
+				match.nw_src, match.nw_dst, match.tp_dst)
 
 		# Not finished: need to uninstall flows. Now just leave them till expires
 		pass
@@ -523,7 +717,7 @@ class Switch (EventMixin):
 		#self._install_path(p, match.flip())
 
 	######################################################
-	## Handle Management Packet
+	## Construct match for flow
 	def consMatch(self, data):
 		match = of.ofp_match()
 		match.dl_type = pkt.ethernet.IP_TYPE
@@ -548,7 +742,9 @@ class Switch (EventMixin):
 		data['nTree'] = len(tidLst)
 		data['treelst'] = tidLst		# Each tree id is an integer, written to be a DWord
 		# If it does not work, pack the packet into byte stream and try again.
+		log.debug('Packing trees: %d->%s', data['nTree'], str(data['treelst']))
 		packet.next.next.payload = MCPacket.buildManagePacket(data)
+		#log.debug('Packet length: %d', len(packet.next.next.payload))
 
 		# Send packet out message
 		msg = of.ofp_packet_out(in_port=event.port)
@@ -567,6 +763,9 @@ class Switch (EventMixin):
 		packet.next.next.dstport, packet.next.next.srcport = packet.next.next.srcport, packet.next.next.dstport
 
 		# If it does not work, pack the packet into byte stream and try again.
+		data['type'] = MC.JOIN_REPLY
+		data['status'] = 1
+		packet.next.next.payload = MCPacket.buildManagePacket(data)
 
 		# Send packet out message
 		msg = of.ofp_packet_out(in_port=event.port)
@@ -578,36 +777,40 @@ class Switch (EventMixin):
 	## Handle Management Packet
 	def handleMngPacket(self, packet, event, log):
 		retPkt = None
-		data = MCPacket.extractManagePacket(packet.next.next.payload)
+		data = MCPacket.extractManagePacket(MCPacket(packet.next.next.payload))
+		data['srcaddr'] = str(packet.next.srcip)
 		# Add the ethernet address into the ipMap. Used for topology construction in the view of ethernet view.
 
 		if data['type'] == MC.INIT:
-			log.debug('[INIT] Request received: %s -> %s:%04x', data['srcaddr'], data['dstaddr'], data['dstport'])
+			log.debug('[INIT] Request received: %s -> %s:%d #tree: %s', data['srcaddr'], data['dstaddr'], data['dstport'], data['nTree'])
 			# Initialize multicast session
 			# 1. Construct multiple trees
-			tlst, tidLst = self.mcsm.initSession(packet, data, self)
+			tlst, tidLst, rLst = mcsm.initSession(packet, data, self)
 			log.debug('[INIT] Trees obtained: %s', str(tidLst))
 
-			# 2. Construct match and install trees
-			match = self.consMatch(data)
-			self.installTrees(data, tlst, tidLst, match, event)		# need to record this in database
-			log.debug('[INIT] Installed.')
+			if tlst:
+				# 2. Construct match and install trees
+				match = self.consMatch(data)
+				self.installTrees(data, self, rLst, tlst, tidLst, match, event)		# need to record this in database
+				log.debug('[INIT] Installed.')
+			else:
+				log.debug('[INIT] No tree obtained. Reply none.')
 
 			# 3. Reconstruct and reply the init packet
 			retPkt = self.initReply(event, packet, data, tidLst)
 			log.debug('[INIT] Replied.')
 		elif data['type'] == MC.END:
-			log.debug('[END] Request received: %s -> %s:%04x', data['srcaddr'], data['dstaddr'], data['dstport'])
+			log.debug('[END] Request received: %s -> %s:%d', data['srcaddr'], data['dstaddr'], data['dstport'])
 			# End multicast session
 			# 1. Uninstall trees
 			match = self.consMatch(data)
 			self.uninstallTrees(data, match, event)
-			log.debug('[INIT] Processed.')
+			log.debug('[END] Processed.')
 		elif data['type'] == MC.JOIN:
-			log.debug('[JOIN] Request received: %s -> %s:%04x', data['srcaddr'], data['dstaddr'], data['dstport'])
+			log.debug('[JOIN] Request received: %s -> %s:%d', data['srcaddr'], data['dstaddr'], data['dstport'])
 			# Receiver joining a group
 			# 1. record receiver
-			self.mcsm.addMem(data)
+			mcsm.addMem(data)
 			log.debug('[JOIN] Member added.')
 			# 2. Reconstruct and reply the join packet
 			retPkt = self.joinReply(event, packet, data)
@@ -615,11 +818,37 @@ class Switch (EventMixin):
 		elif data['type'] == MC.LEAVE:
 			# Receiver leaving a group
 			# 1. delete receiver
-			self.mcsm.delMem(data)
+			mcsm.delMem(data)
 			log.debug('[LEAVE] Processed.')
 
 		return retPkt
 
+
+	def arpReply(self, packet, event, additive = 0):
+		if packet.payload.opcode == arp.REQUEST:
+			arp_reply = arp()
+			if additive == 0:
+				arp_reply.hwsrc = EthAddr('fa-31-11-11-11-11')
+			elif additive == 1:
+				arp_reply.hwsrc = EthAddr('fa-31-11-11-11-12')
+			arp_reply.hwdst = packet.src
+			arp_reply.opcode = arp.REPLY
+			arp_reply.protosrc = packet.payload.protodst
+			arp_reply.protodst = packet.payload.protosrc
+			ether = ethernet()
+			ether.type = ethernet.ARP_TYPE
+			ether.dst = packet.src
+			ether.src = arp_reply.hwsrc
+			ether.payload = arp_reply
+			#send this packet to the switch
+			#see section below on this topic
+
+			msg = of.ofp_packet_out(in_port=event.port)
+			msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
+			msg.data = ether
+			self.connection.send(msg)
+
+			log.debug('Replying ARP request for %s.', str(arp_reply.protosrc))
 
 	def _handle_PacketIn (self, event):
 		def flood ():
@@ -645,7 +874,8 @@ class Switch (EventMixin):
 		packet = event.parsed
 		#################
 		# Set the ip to mac mapping
-		self.mcsm.setIpMap(packet)
+		if packetIsIP(packet, log):
+			mcsm.setIpMap(packet)
 
 		loc = (self, event.port) # Place we saw this ethaddr
 		oldloc = mac_map.get(packet.src) # Place we last saw this ethaddr
@@ -687,28 +917,49 @@ class Switch (EventMixin):
 											dpid_to_str(self.dpid), event.port)
 
 		# Decide the action of the packet
-		if packet.dst.is_multicast:
-			log.debug("Flood multicast from %s", packet.src)
-			flood()
-		else:
-			# Detect if this packet is a specific packet
-			if packetIsUDP(packet, log):
-				# Check if the packet is management packet
-				if packetDstIp(packet, IPAddr(MC.mngaddrConst).toUnsignedN(), log) and packetDstUDPPort(packet, MC.mngportConst, log):
-					# XXX Not right: If yes, we need to send to higher layers
-					# If yes, we can deal with this in global view
-					retPkt = self.handleMngPacket(packet, event, log)
-				# If not management, then should be data packets. Just drop them.
+		sLst = mcsm.sessionLst.keys()
+		dstLst = [ip for ip,port in sLst]
+		if packetIsARP(packet, log):
+			if (packet.next.protodst == IPAddr(MC.mngaddrConst)):
+				self.arpReply(packet, event, 0)
+			elif str(packet.next.protodst) in dstLst:
+				self.arpReply(packet, event, 1)
+			else:
+				if packet.dst not in mac_map:
+					log.debug('Packet: %s', packet.next)
+					log.debug("%s unknown -- flooding" % (packet.dst,))
+					flood()
 				else:
-					pass
-
-			#if packet.dst not in mac_map:
-			#	log.debug("%s unknown -- flooding" % (packet.dst,))
-			#	flood()
-			#else:
-			#	dest = mac_map[packet.dst]
-			#	match = of.ofp_match.from_packet(packet)
-			#	self.install_path(dest[0], dest[1], match, event)
+					dest = mac_map[packet.dst]
+					match = of.ofp_match.from_packet(packet)
+					self.install_path(dest[0], dest[1], match, event)
+		else:
+			if not packet.dst.is_multicast:
+				# Detect if this packet is a specific packet
+				log.debug(packet)
+				if packetIsIP(packet, log) and packetIsUDP(packet, log):
+					log.debug('UDP packet received at %s: %s:%s  %s', self, packetDstIp(packet, IPAddr(MC.mngaddrConst), log), packetDstUDPPort(packet, MC.mngportConst, log), packet.next.next)
+					log.debug(':::> Inport: %s', event.port)
+					# Check if the packet is management packet
+					if packetDstIp(packet, IPAddr(MC.mngaddrConst), log) and packetDstUDPPort(packet, MC.mngportConst, log):
+						# XXX Not right: If yes, we need to send to higher layers
+						# If yes, we can deal with this in global view
+						retPkt = self.handleMngPacket(packet, event, log)
+					# If not management, then should be data packets. Just drop them.
+					else:
+						pass
+				else:
+					if packet.dst not in mac_map:
+						log.debug('Packet: %s', packet.next)
+						log.debug("%s unknown -- flooding" % (packet.dst,))
+						flood()
+					else:
+						dest = mac_map[packet.dst]
+						match = of.ofp_match.from_packet(packet)
+						self.install_path(dest[0], dest[1], match, event)
+			else:
+				log.debug("Flood multicast from %s to %s: %s", packet.src, packet.dst, str(packet.next))
+				flood()
 
 	def disconnect (self):
 		if self.connection is not None:
@@ -820,19 +1071,39 @@ class MCController (EventMixin):
 			sw.connect(event.connection)
 
 	def _handle_BarrierIn (self, event):
-		wp = waiting_trees.pop((event.dpid,event.xid), None)
-		if not wp:
-			#log.info("No waiting packet %s,%s", event.dpid, event.xid)
-			return
-		#log.debug("Notify waiting packet %s,%s", event.dpid, event.xid)
-		wp.notify(event)
+		#log.debug('WaitingTrees: %s', str(waiting_trees))
+		if (event.dpid, event.xid) in waiting_trees:
+			#log.debug('Barrier Received: %s, %s', str(event.dpid), str(event.xid))
+			wp = waiting_trees.pop((event.dpid,event.xid), None)
+			if not wp:
+				#log.info("No waiting packet %s,%s", event.dpid, event.xid)
+				return
+			#log.debug("Notify waiting packet %s,%s", event.dpid, event.xid)
+			wp.notify(event)
+		else:
+			wp = waiting_paths.pop((event.dpid,event.xid), None)
+			if not wp:
+				#log.info("No waiting packet %s,%s", event.dpid, event.xid)
+				return
+			#log.debug("Notify waiting packet %s,%s", event.dpid, event.xid)
+			wp.notify(event)
 
 
-def launch ():
+def launch (multitree = True):
+	global mtflg
+	if multitree.lower() in ['false', 'f', 'n', 'no', 'disabled', 'disable']:
+		mtflg = False
+	else:
+		mtflg = True
+	if mtflg:
+		log.debug('System Openup: multi-tree enabled.')
+	else:
+		log.debug('System Openup: multi-tree disabled.')
 	core.registerNew(MCController)
 
 	timeout = min(max(TREE_SETUP_TIME, 5) * 2, 15)
 	Timer(timeout, WaitingTree.expire_waiting_trees, recurring=True)
+	Timer(timeout, WaitingPath.expire_waiting_paths, recurring=True)
 
 
 

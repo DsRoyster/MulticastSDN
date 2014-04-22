@@ -4,89 +4,89 @@ import struct
 
 class MCPacket(MC):
 	def init(self, dataIn = ''):
-		data = dataIn
+		self.data = dataIn
 	def __init__(self, dataIn = ''):
 		self.init(dataIn)
 
 	# Push into the data string
 	def addByte(self, byte):
-		data += chr(byte)
+		self.data += chr(byte)
 	def addWord(self, word):
-		data += chr((word >> 8) % 256)
-		data += chr((word >> 0) % 256)
+		self.data += chr((word >> 8) % 256)
+		self.data += chr((word >> 0) % 256)
 	def addDWord(self, dword):
-		data += chr((word >> 24) % 256)
-		data += chr((word >> 16) % 256)
-		data += chr((word >> 8) % 256)
-		data += chr((word >> 0) % 256)
+		self.data += chr((dword >> 24) % 256)
+		self.data += chr((dword >> 16) % 256)
+		self.data += chr((dword >> 8) % 256)
+		self.data += chr((dword >> 0) % 256)
 	def addString(self, str):
-		data += str
+		self.data += str
 
 	# Pop from the tail of the data string
 	def popByte(self):
-		ret = ord(data[len(data)-1])
-		data = data[0:len(data)-1]
+		ret = ord(self.data[len(self.data)-1])
+		self.data = self.data[0:len(self.data)-1]
 		return ret
 	def popWord(self):
-		ret = ord(data[len(data)-1])*256
-		ret += ord(data[len(data)-2])
-		data = data[0:len(data)-2]
+		ret = ord(self.data[len(self.data)-1])*256
+		ret += ord(self.data[len(self.data)-2])
+		data = self.data[0:len(self.data)-2]
 		return ret
 	def popDWord(self):
-		ret = ord(data[len(data)-1])*256*256*256
-		ret += ord(data[len(data)-2])*256*256
-		ret += ord(data[len(data)-3])*256
-		ret += ord(data[len(data)-4])
-		data = data[0:len(data)-4]
+		ret = ord(self.data[len(self.data)-1])*256*256*256
+		ret += ord(self.data[len(self.data)-2])*256*256
+		ret += ord(self.data[len(self.data)-3])*256
+		ret += ord(self.data[len(self.data)-4])
+		data = self.data[0:len(self.data)-4]
 		return ret
 	def popString(self, length):
-		ret = data[len(data)-length:len(data)]
-		data = data[0:len(data)-length]
+		ret = self.data[len(self.data)-length:len(self.data)]
+		data = self.data[0:len(self.data)-length]
 		return ret
 
 	# Pop from the front of the data string
 	def popByteFront(self):
-		ret = ord(data[0])
-		data = data[1:len(data)]
+		ret = ord(self.data[0])
+		data = self.data[1:len(self.data)]
 		return ret
 	def popWordFront(self):
-		ret = ord(data[0])*256
-		ret += ord(data[1])
-		data = data[2:len(data)]
+		ret = ord(self.data[0])*256
+		ret += ord(self.data[1])
+		data = self.data[2:len(self.data)]
 		return ret
 	def popDWordFront(self):
-		ret = ord(data[0])*256*256*256
-		ret += ord(data[1])*256*256
-		ret += ord(data[2])*256
-		ret += ord(data[3])
-		data = data[4:len(data)-4]
+		ret = ord(self.data[0])*256*256*256
+		ret += ord(self.data[1])*256*256
+		ret += ord(self.data[2])*256
+		ret += ord(self.data[3])
+		data = self.data[4:len(self.data)-4]
 		return ret
 	def popStringFront(self, length):
-		ret = data[0:length]
-		data = data[length:len(data)]
+		ret = self.data[0:length]
+		data = self.data[length:len(self.data)]
 		return ret
 
 	# Get from any position of the data string
 	def getByte(self, pos):
-		ret = ord(data[pos])
+		ret = ord(self.data[pos])
 		return ret
 	def getWord(self, pos):
-		ret = ord(data[pos])*256
-		ret += ord(data[pos+1])
+		ret = ord(self.data[pos])*256
+		ret += ord(self.data[pos+1])
 		return ret
 	def getDWord(self, pos):
-		ret = ord(data[pos])*256*256*256
-		ret += ord(data[pos+1])*256*256
-		ret += ord(data[pos+2])*256
-		ret += ord(data[pos+3])
+		ret = ord(self.data[pos])*256*256*256
+		ret += ord(self.data[pos+1])*256*256
+		ret += ord(self.data[pos+2])*256
+		ret += ord(self.data[pos+3])
 		return ret
 	def getString(self, pos, length):
-		ret = data[pos:pos+length]
+		ret = self.data[pos:pos+length]
 		return ret
 
 	# Return data string
 	def getData(self):
-		return data
+		return self.data
 
 	# Construct management packet
 	@staticmethod
@@ -101,7 +101,7 @@ class MCPacket(MC):
 			msg.addString(skt.inet_aton(data['srcaddr']))	# Source IP address
 			msg.addWord(data['srcport'])					# Source port
 			msg.addDWord(data['datalen'])					# Data length
-			msg.addDWord(0x00000000)						# Number of trees, 0 means ask for, >0 means require
+			msg.addDWord(data['nTree'])						# Number of trees, 0 means ask for, >0 means require
 		elif data['type'] == MC.INIT_REPLY:
 			msg.addDWord(MC.INIT_REPLY)						# Packet type
 			msg.addString(skt.inet_aton(data['dstaddr']))	# Destination IP address
@@ -157,57 +157,57 @@ class MCPacket(MC):
 
 		if msg.getDWord(0) == MC.INIT:
 			data['type'] = MC.INIT
-			data['dstaddr'] = skt.inet_atoi(msg.getString(4, 4))
+			data['dstaddr'] = skt.inet_ntoa(msg.getString(4, 4))
 			data['dstport'] = msg.getWord(8)
-			data['srcaddr'] = skt.inet_atoi(msg.getString(10, 4))
+			data['srcaddr'] = skt.inet_ntoa(msg.getString(10, 4))
 			data['srcport'] = msg.getWord(14)
 			data['datalen'] = msg.getDWord(16)
 			data['nTree'] = msg.getDWord(20)
-		elif data['type'] == MC.INIT_REPLY:
+		elif msg.getDWord(0) == MC.INIT_REPLY:
 			data['type'] = MC.INIT_REPLY
-			data['dstaddr'] = skt.inet_atoi(msg.getString(4, 4))
+			data['dstaddr'] = skt.inet_ntoa(msg.getString(4, 4))
 			data['dstport'] = msg.getWord(8)
-			data['srcaddr'] = skt.inet_atoi(msg.getString(10, 4))
+			data['srcaddr'] = skt.inet_ntoa(msg.getString(10, 4))
 			data['srcport'] = msg.getWord(14)
 			data['datalen'] = msg.getDWord(16)
 			data['nTree'] = msg.getDWord(20)
 			data['treelst'] = []
 			for i in xrange(data['nTree']):
 				data['treelst'].append(msg.getDWord(24 + 4 * i))
-		elif data['type'] == MC.END:
+		elif msg.getDWord(0) == MC.END:
 			data['type'] = MC.END
-			data['dstaddr'] = skt.inet_atoi(msg.getString(4, 4))
+			data['dstaddr'] = skt.inet_ntoa(msg.getString(4, 4))
 			data['dstport'] = msg.getWord(8)
-			data['srcaddr'] = skt.inet_atoi(msg.getString(10, 4))
+			data['srcaddr'] = skt.inet_ntoa(msg.getString(10, 4))
 			data['srcport'] = msg.getWord(14)
-		elif data['type'] == MC.END_REPLY:
+		elif msg.getDWord(0) == MC.END_REPLY:
 			data['type'] = MC.END_REPLY
-			data['dstaddr'] = skt.inet_atoi(msg.getString(4, 4))
+			data['dstaddr'] = skt.inet_ntoa(msg.getString(4, 4))
 			data['dstport'] = msg.getWord(8)
-			data['srcaddr'] = skt.inet_atoi(msg.getString(10, 4))
+			data['srcaddr'] = skt.inet_ntoa(msg.getString(10, 4))
 			data['srcport'] = msg.getWord(14)
-		elif data['type'] == MC.JOIN:
+		elif msg.getDWord(0) == MC.JOIN:
 			data['type'] = MC.JOIN
-			data['dstaddr'] = skt.inet_atoi(msg.getString(4, 4))
+			data['dstaddr'] = skt.inet_ntoa(msg.getString(4, 4))
 			data['dstport'] = msg.getWord(8)
-			data['srcaddr'] = skt.inet_atoi(msg.getString(10, 4))
+			data['srcaddr'] = skt.inet_ntoa(msg.getString(10, 4))
 			data['status'] = msg.getWord(14)
-		elif data['type'] == MC.JOIN_REPLY:
+		elif msg.getDWord(0) == MC.JOIN_REPLY:
 			data['type'] = MC.JOIN_REPLY
-			data['dstaddr'] = skt.inet_atoi(msg.getString(4, 4))
+			data['dstaddr'] = skt.inet_ntoa(msg.getString(4, 4))
 			data['dstport'] = msg.getWord(8)
-			data['srcaddr'] = skt.inet_atoi(msg.getString(10, 4))
+			data['srcaddr'] = skt.inet_ntoa(msg.getString(10, 4))
 			data['status'] = msg.getWord(14)
-		elif data['type'] == MC.LEAVE:
+		elif msg.getDWord(0) == MC.LEAVE:
 			data['type'] = MC.LEAVE
-			data['dstaddr'] = skt.inet_atoi(msg.getString(4, 4))
+			data['dstaddr'] = skt.inet_ntoa(msg.getString(4, 4))
 			data['dstport'] = msg.getWord(8)
-			data['srcaddr'] = skt.inet_atoi(msg.getString(10, 4))
-		elif data['type'] == MC.LEAVE_REPLY:
+			data['srcaddr'] = skt.inet_ntoa(msg.getString(10, 4))
+		elif msg.getDWord(0) == MC.LEAVE_REPLY:
 			data['type'] = MC.LEAVE_REPLY
-			data['dstaddr'] = skt.inet_atoi(msg.getString(4, 4))
+			data['dstaddr'] = skt.inet_ntoa(msg.getString(4, 4))
 			data['dstport'] = msg.getWord(8)
-			data['srcaddr'] = skt.inet_atoi(msg.getString(10, 4))
+			data['srcaddr'] = skt.inet_ntoa(msg.getString(10, 4))
 
 		return data
 
@@ -249,9 +249,8 @@ class MCPacket(MC):
 		s_addr = skt.inet_ntoa(iph[8]);
 		d_addr = skt.inet_ntoa(iph[9]);
 
-
 		# UDP packet header
-		udp_header = pkt[iph_length:iph_length+20]
+		udp_header = pkt[iph_length:iph_length+8]
 		#now unpack them :)
 		udph = struct.unpack('!HHHH' , udp_header)
 

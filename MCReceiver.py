@@ -3,7 +3,7 @@ from MCCommon import *
 from MCPacket import *
 import time
 
-class MCSender(MC):
+class MCReceiver(MC):
 
 	def init(self, dstaddrIn, dsrportIn, mngaddrConst = MC.mngaddrConst, mngportConst = MC.mngportConst):
 		# Variables
@@ -31,14 +31,16 @@ class MCSender(MC):
 		# Send management packet to controller
 		msg = MCPacket.buildManagePacket(data)
 		while True:
+			print MCPacket(msg).getDWord(0), MC.JOIN
 			self.mngskt.sendto(msg, (self.mngaddr, self.mngport))
 
 			while True:
-				recvdata, addr = sock.recvfrom(24) 	# Init and Init_Reply both have 24 bytes length
-				if skt.inet_ntoa(addr) == self.srcaddr:
+				recvdata, addr = self.mngskt.recvfrom(24) 	# Init and Init_Reply both have 24 bytes length
+				if addr[0] == self.mngaddr and addr[1] == self.mngport:
 					break
 
 			recvmsg = MCPacket(recvdata)
+			print 'Type:', recvmsg.getDWord(0)
 			if recvmsg.getDWord(0) != MC.JOIN_REPLY:
 				continue
 			# Extract information from packet
@@ -51,15 +53,19 @@ class MCSender(MC):
 		print 'Join group success.'
 
 		# Begin transmission
-		self.recvskt = skt.socket(skt.AF_INET, skt.SOCK_DGRAM, skt.IPPROTO_UDP)
+		#self.recvskt = skt.socket(skt.AF_INET, skt.SOCK_RAW)
+		#self.recvskt.setsockopt(skt.IPPROTO_IP, skt.IP_HDRINCL, 1)
+		#self.recvskt.ioctl(skt.SIO_RCVALL, skt.RCVALL_ON)
+		self.recvskt = skt.socket(skt.AF_INET, skt.SOCK_DGRAM)
+		self.recvskt.bind(('', self.dstport))
+		self.recvskt.setsockopt(skt.SOL_SOCKET, skt.SO_BROADCAST, 1)
 		return True
 
-	def recv(self):
+	def recv(self, blocking = 1):
 		# Just count the amount of data received, regardless of the content
 		data = {
 		'type':MC.INIT,
 		'srcaddr':self.srcaddr,
-		'srcport':self.srcport,
 		'dstaddr':self.dstaddr,
 		'dstport':self.dstport,
 		'treeid':0,
@@ -68,18 +74,27 @@ class MCSender(MC):
 		}
 		datacnt = 0
 
+		self.recvskt.setblocking(blocking)
+
+		# Denote transmission start
+		recvmsg, addr = self.recvskt.recvfrom(65565)
 		start_time = time.time()
 		last_timestamp = 0
+		print 'Begin listening...'
 		while True:
 			recvmsg, addr = self.recvskt.recvfrom(65565)
-			recvdata = MCPacket.extractDataPacket(recvmsg)
-			if recvdata['dstaddr'] != self.dstaddr:
+			if recvmsg == None:
 				continue
-			datacnt += len(recvdata['payload'])
+			#recvdata = MCPacket.extractDataPacket(recvmsg)
+			print 'Receiving from:', addr
+			if recvmsg[0:2] != 'MC':
+				continue
+			datacnt += len(recvmsg)
 			elp_time = time.time() - start_time
-			if elp_time >= last_timestamp:
-				last_timestamp += 10
-				print 'Time elapsed:', elp_time, 'Data received:', datacnt, 'Bytes'
+			#if elp_time >= last_timestamp:
+				#last_timestamp += 10
+			print 'Time elapsed:', elp_time, 'Data received:', datacnt, 'Bytes'
+			print 'Bandwidth:', (datacnt * 8 / 1000000) / elp_time, 'Mbps'
 
 
 		return datacnt
@@ -89,18 +104,16 @@ class MCSender(MC):
 		data = {
 		'type':MC.LEAVE,
 		'srcaddr':self.srcaddr,
-		'srcport':self.srcport,
 		'dstaddr':self.dstaddr,
 		'dstport':self.dstport,
 		}
 
 		# Send management packet to controller
-		msg = MCPacket.buildPacketContent(data)
+		msg = MCPacket.buildManagePacket(data)
 		self.mngskt.sendto(msg, (self.mngaddr, self.mngport))
 
 		# End all sockets
-		for s in self.sendskt:
-			s.close()
+		self.recvskt.close()
 
 		print 'Leave group.'
 

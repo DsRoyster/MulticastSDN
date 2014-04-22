@@ -32,6 +32,7 @@ import sys
 from pox.lib.packet.tcp import tcp
 from pox.lib.packet.arp import arp
 from pox.lib.packet.ipv4 import ipv4
+from pox.lib.packet.udp import udp
 from pox.lib.packet.ethernet import ethernet
 from pox.lib.packet.ethernet import ETHER_BROADCAST
 

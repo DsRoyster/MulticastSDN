@@ -1,5 +1,7 @@
 from mininet.topo import Topo
 from mininet.net import Mininet
+from mininet.link import TCLink
+from mininet.node import CPULimitedHost
 
 class MyTopo( Topo ):
 	def __init__( self ):
@@ -22,38 +24,32 @@ class MyTopo( Topo ):
 		r1 = self.addHost('r1')
 		r2 = self.addHost('r2')
 		r3 = self.addHost('r3')
-		# s1.setIP('10.10.10.1')
-		# s2.setIP('10.10.10.2')
-		# s3.setIP('10.10.10.3')
-		# r1.setIP('10.10.10.11')
-		# r2.setIP('10.10.10.12')
-		# r3.setIP('10.10.10.13')
 
 		# Add links
-		self.addLink( s1, sw0 )
-		self.addLink( s2, sw0 )
-		self.addLink( s3, sw0 )
-		self.addLink( sw0, sw11 )
-		self.addLink( sw0, sw12 )
-		self.addLink( sw0, sw13 )
-		self.addLink( sw11, sw21 )
-		self.addLink( sw11, sw22 )
-		self.addLink( sw11, sw23 )
-		self.addLink( sw12, sw21 )
-		self.addLink( sw12, sw22 )
-		self.addLink( sw12, sw23 )
-		self.addLink( sw13, sw21 )
-		self.addLink( sw13, sw22 )
-		self.addLink( sw13, sw23 )
-		self.addLink( sw21, r1 )
-		self.addLink( sw22, r2 )
-		self.addLink( sw23, r3 )
+		opth = {'bw':100}
+		optsw = {'bw':5}
+		self.addLink( s1, sw0, **opth )
+		self.addLink( s2, sw0, **opth )
+		self.addLink( s3, sw0, **opth )
+		self.addLink( sw0, sw11, **optsw )
+		self.addLink( sw0, sw12, **optsw )
+		self.addLink( sw0, sw13, **optsw )
+		self.addLink( sw11, sw21, **optsw )
+		self.addLink( sw11, sw22, **optsw )
+		self.addLink( sw11, sw23, **optsw )
+		self.addLink( sw12, sw21, **optsw )
+		self.addLink( sw12, sw22, **optsw )
+		self.addLink( sw12, sw23, **optsw )
+		self.addLink( sw13, sw21, **optsw )
+		self.addLink( sw13, sw22, **optsw )
+		self.addLink( sw13, sw23, **optsw )
+		self.addLink( sw21, r1, **opth )
+		self.addLink( sw22, r2, **opth )
+		self.addLink( sw23, r3, **opth )
 
 topos = { 'mytopo': ( lambda: MyTopo() ) }
-# Assign IP addresses
-# topo.get(s1).setIP('10.10.10.1')
-# topo.get(s2).setIP('10.10.10.2')
-# topo.get(s3).setIP('10.10.10.3')
-# topo.get(r1).setIP('10.10.10.11')
-# topo.get(r2).setIP('10.10.10.12')
-# topo.get(r3).setIP('10.10.10.13')
+#topo = topos['mytopo']
+#net = Mininet(topo = topo, host=CPULimitedHost, link = TCLink)
+#net.start
+
+
