@@ -172,6 +172,9 @@ def calcMCTrees(s, R, limit = 0):
 	# Find trees until cannot find one
 	tlst = []
 	itrCnt = 1
+
+	t = time.time()
+
 	while True:
 		#log.debug('Iteration %d: finding tree.', itrCnt)
 		itrCnt += 1
@@ -191,6 +194,10 @@ def calcMCTrees(s, R, limit = 0):
 		tlst.append(tr1)
 		if not mtflg or (limit != 0 and len(tlst) >= limit):
 			break
+
+	t = time.time() - t
+	log.debug('Time used for finding %d tree(s): %f ms', len(tlst), t * 1000)
+
 
 	#for tr in tlst:
 	#	log.debug('---> %s', str(tr))
