@@ -62,57 +62,57 @@ class MCReceiver(MC):
 		return True
 
 	# Test of application goodput
-	# def recv(self, blocking = 1):
-	# 	# Just count the amount of data received, regardless of the content
-	# 	data = {
-	# 	'type':MC.INIT,
-	# 	'srcaddr':self.srcaddr,
-	# 	'dstaddr':self.dstaddr,
-	# 	'dstport':self.dstport,
-	# 	'treeid':0,
-	# 	'datalen':0,
-	# 	'payload':0
-	# 	}
-	# 	datacnt = 0
-	#
-	# 	self.recvskt.setblocking(blocking)
-	#
-	#
-	# 	file = open('log_'+str(time.time())+'.txt', 'w')
-	#
-	#
-	# 	# Denote transmission start
-	# 	recvmsg, addr = self.recvskt.recvfrom(65565)
-	# 	start_time1 = start_time = time.time()
-	# 	last_timestamp = 0
-	# 	print 'Begin listening...'
-	# 	nop = 0; datacnt1 = 0
-	# 	while True:
-	# 		recvmsg, addr = self.recvskt.recvfrom(65565)
-	# 		if recvmsg == None:
-	# 			continue
-	# 		#recvdata = MCPacket.extractDataPacket(recvmsg)
-	# 		print 'Receiving from:', addr
-	# 		if recvmsg[0:2] != 'MC':
-	# 			continue
-	# 		nop += 1
-	# 		datacnt += len(recvmsg)
-	# 		datacnt1 += len(recvmsg)
-	# 		elp_time = time.time() - start_time
-	# 		elp_time1 = time.time() - start_time1
-	# 		#if elp_time >= last_timestamp:
-	# 			#last_timestamp += 10
-	# 		print 'Time elapsed:', elp_time, 'Data received:', datacnt, 'Bytes'
-	# 		print 'Bandwidth:', (datacnt * 8 / 1000000) / elp_time, 'Mbps'
-	# 		if nop % 50 == 0:
-	# 			file.write(str((float(datacnt1) * 8 / 1000000) / elp_time1) + '\n')
-	# 			file.flush()
-	# 			datacnt1 = 0
-	# 			start_time1 = time.time()
-	#
-	# 	file.close()
-	#
-	# 	return datacnt
+	def recv(self, blocking = 1):
+		# Just count the amount of data received, regardless of the content
+		data = {
+		'type':MC.INIT,
+		'srcaddr':self.srcaddr,
+		'dstaddr':self.dstaddr,
+		'dstport':self.dstport,
+		'treeid':0,
+		'datalen':0,
+		'payload':0
+		}
+		datacnt = 0
+
+		self.recvskt.setblocking(blocking)
+
+
+		file = open('log_'+str(time.time())+'.txt', 'w')
+
+
+		# Denote transmission start
+		recvmsg, addr = self.recvskt.recvfrom(65565)
+		start_time1 = start_time = time.time()
+		last_timestamp = 0
+		print 'Begin listening...'
+		nop = 0; datacnt1 = 0
+		while True:
+			recvmsg, addr = self.recvskt.recvfrom(65565)
+			if recvmsg == None:
+				continue
+			#recvdata = MCPacket.extractDataPacket(recvmsg)
+			print 'Receiving from:', addr
+			if recvmsg[0:2] != 'MC':
+				continue
+			nop += 1
+			datacnt += len(recvmsg)
+			datacnt1 += len(recvmsg)
+			elp_time = time.time() - start_time
+			elp_time1 = time.time() - start_time1
+			#if elp_time >= last_timestamp:
+				#last_timestamp += 10
+			print 'Time elapsed:', elp_time, 'Data received:', datacnt, 'Bytes'
+			print 'Bandwidth:', (datacnt * 8 / 1000000) / elp_time, 'Mbps'
+			if nop % 50 == 0:
+				file.write(str((float(datacnt1) * 8 / 1000000) / elp_time1) + '\n')
+				file.flush()
+				datacnt1 = 0
+				start_time1 = time.time()
+
+		file.close()
+
+		return datacnt
 
 	# def recv(self, blocking = 1):
 	# 	# Just count the amount of data received, regardless of the content
@@ -194,65 +194,65 @@ class MCReceiver(MC):
 
 
 
-	def recv(self, blocking = 1):
-		# Just count the amount of data received, regardless of the content
-		data = {
-		'type':MC.INIT,
-		'srcaddr':self.srcaddr,
-		'dstaddr':self.dstaddr,
-		'dstport':self.dstport,
-		'treeid':0,
-		'datalen':0,
-		'payload':0
-		}
-		datacnt = 0
-
-		self.recvskt.setblocking(blocking)
-
-
-		file1 = open('logx_'+str(time.time())+'.txt', 'w')
-
-
-
-		# Denote transmission start
-		recvmsg, addr = self.recvskt.recvfrom(65565)
-		start_time = start_time1 = start_time2 = start_time3 = time.time()
-		last_timestamp = 0
-		print 'Begin listening...'
-		nop1 = 0; nop2 = 0; nop3 = 0; nop = 0; datacnt1 = 0; datacnt2 = 0; datacnt3 = 0
-		while True:
-			recvmsg, addr = self.recvskt.recvfrom(65565)
-			if recvmsg == None:
-				continue
-			#recvdata = MCPacket.extractDataPacket(recvmsg)
-			print 'Receiving from:', addr
-			if recvmsg[0:2] != 'MC':
-				continue
-			if addr[1] == 26000:
-				datacnt1 += len(recvmsg)
-				elp_time1 = time.time() - start_time1
-				nop1 += 1
-			if addr[1] == 26001:
-				datacnt2 += len(recvmsg)
-				elp_time2 = time.time() - start_time2
-				nop2 += 1
-			if addr[1] == 26002:
-				datacnt3 += len(recvmsg)
-				elp_time3 = time.time() - start_time3
-				nop3 += 1
-			elp_time = time.time() - start_time
-			datacnt += len(recvmsg)
-			nop += 1
-			print 'Time elapsed:', elp_time, 'Data received:', datacnt, 'Bytes'
-			print 'Bandwidth:', (datacnt * 8 / 1000000) / elp_time, 'Mbps'
-			if nop and nop % 50 == 0:
-				file1.write(str(datacnt) + ' ' + str(elp_time) + '\n')
-				file1.flush()
-				nop = 0
-
-		file1.close()
-
-		return datacnt
+	# def recv(self, blocking = 1):
+	# 	# Just count the amount of data received, regardless of the content
+	# 	data = {
+	# 	'type':MC.INIT,
+	# 	'srcaddr':self.srcaddr,
+	# 	'dstaddr':self.dstaddr,
+	# 	'dstport':self.dstport,
+	# 	'treeid':0,
+	# 	'datalen':0,
+	# 	'payload':0
+	# 	}
+	# 	datacnt = 0
+	#
+	# 	self.recvskt.setblocking(blocking)
+	#
+	#
+	# 	file1 = open('logx_'+str(time.time())+'.txt', 'w')
+	#
+	#
+	#
+	# 	# Denote transmission start
+	# 	recvmsg, addr = self.recvskt.recvfrom(65565)
+	# 	start_time = start_time1 = start_time2 = start_time3 = time.time()
+	# 	last_timestamp = 0
+	# 	print 'Begin listening...'
+	# 	nop1 = 0; nop2 = 0; nop3 = 0; nop = 0; datacnt1 = 0; datacnt2 = 0; datacnt3 = 0
+	# 	while True:
+	# 		recvmsg, addr = self.recvskt.recvfrom(65565)
+	# 		if recvmsg == None:
+	# 			continue
+	# 		#recvdata = MCPacket.extractDataPacket(recvmsg)
+	# 		print 'Receiving from:', addr
+	# 		if recvmsg[0:2] != 'MC':
+	# 			continue
+	# 		if addr[1] == 26000:
+	# 			datacnt1 += len(recvmsg)
+	# 			elp_time1 = time.time() - start_time1
+	# 			nop1 += 1
+	# 		if addr[1] == 26001:
+	# 			datacnt2 += len(recvmsg)
+	# 			elp_time2 = time.time() - start_time2
+	# 			nop2 += 1
+	# 		if addr[1] == 26002:
+	# 			datacnt3 += len(recvmsg)
+	# 			elp_time3 = time.time() - start_time3
+	# 			nop3 += 1
+	# 		elp_time = time.time() - start_time
+	# 		datacnt += len(recvmsg)
+	# 		nop += 1
+	# 		print 'Time elapsed:', elp_time, 'Data received:', datacnt, 'Bytes'
+	# 		print 'Bandwidth:', (datacnt * 8 / 1000000) / elp_time, 'Mbps'
+	# 		if nop and nop % 50 == 0:
+	# 			file1.write(str(datacnt) + ' ' + str(elp_time) + '\n')
+	# 			file1.flush()
+	# 			nop = 0
+	#
+	# 	file1.close()
+	#
+	# 	return datacnt
 
 	def leave(self):
 		# Define data for LEAVE packet
